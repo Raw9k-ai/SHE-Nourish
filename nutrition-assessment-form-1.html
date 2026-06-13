@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!--
+  Content-Security-Policy notes:
+  - script-src is limited to the exact CDNs this page uses. 'unsafe-eval' and
+    'unsafe-inline' are required because this page compiles JSX in-browser
+    with @babel/standalone and styles itself at runtime via the Tailwind
+    Play CDN; both inject and execute generated <script>/<style> content
+    that cannot be expressed as a static hash or nonce.
+  - connect-src/form-action are 'none' and object-src/base-uri are locked
+    down. This page collects sensitive participant health data into
+    localStorage and never needs to call out to a network endpoint, so even
+    if a future bug introduced injectable content, this policy prevents that
+    data from being exfiltrated off-device or the page from being reframed.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https://cdnjs.cloudflare.com https://unpkg.com https://cdn.tailwindcss.com 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';" />
+<title>Nutritional Assessment Register</title>
+
+<!-- React + Babel (for JSX in-browser) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+<!-- Tailwind (utility classes) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+
+<style>
+  body { font-family: 'IBM Plex Sans', sans-serif; }
+  @media print {
+    .no-print { display: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+// ---------- Icons (small inline SVGs, lucide-style) ----------
+
+function Icon({ children, size = 18, className = "" }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      {children}
+    </svg>
+  );
+}
+
+const ArrowLeft = (p) => <Icon {...p}><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></Icon>;
+const ChevronLeft = (p) => <Icon {...p}><path d="m15 18-6-6 6-6" /></Icon>;
+const ChevronRight = (p) => <Icon {...p}><path d="m9 18 6-6-6-6" /></Icon>;
+const Search = (p) => <Icon {...p}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></Icon>;
+const Trash2 = (p) => <Icon {...p}><path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></Icon>;
+const Download = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" /></Icon>;
+const Save = (p) => <Icon {...p}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></Icon>;
+const Users = (p) => <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></Icon>;
+const ClipboardList = (p) => <Icon {...p}><rect x="8" y="2" width="8" height="4" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /><path d="M12 11h4" /><path d="M12 16h4" /><path d="M8 11h.01" /><path d="M8 16h.01" /></Icon>;
+const Printer = (p) => <Icon {...p}><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" /></Icon>;
+
+// ---------- Field configuration (mirrors the paper form, section by section) ----------
+
+const SECTIONS = [
+  {
+    id: 1,
+    title: "Socio-Economic Data",
+    note: "Background and context for the assessment.",
+    fields: [
+      { key: "name", label: "Name", type: "text" },
+      { key: "age", label: "Age", type: "number", unit: "years" },
+      { key: "sex", label: "Sex", type: "select", options: ["Female", "Male", "Other"] },
+      { key: "occupation", label: "Occupation", type: "text" },
+      { key: "extraCurricular", label: "Extra-curricular activity", type: "text" },
+      { key: "workPattern", label: "Work pattern", type: "select", options: ["Sedentary", "Light", "Moderate", "Heavy"] },
+      { key: "familyMembers", label: "Family members", type: "number" },
+      { key: "pci", label: "Per capita income (PCI)", type: "number", unit: "₹ / month" },
+      { key: "economicCondition", label: "Economic condition", type: "select", options: ["Low", "Lower-middle", "Middle", "Upper-middle", "High"] },
+      { key: "healthComplications", label: "Health complications / diseases", type: "textarea" },
+      { key: "religion", label: "Religion", type: "text" },
+      { key: "distance", label: "Distance (home to institution)", type: "number", unit: "km" },
+    ],
+  },
+  {
+    id: 2,
+    title: "Anthropometric Data",
+    note: "BMI, IBW, WHR and grading are calculated automatically once entered.",
+    fields: [
+      { key: "height", label: "Height", type: "number", unit: "cm" },
+      { key: "weight", label: "Weight", type: "number", unit: "kg" },
+      { key: "waist", label: "Waist circumference", type: "number", unit: "cm" },
+      { key: "hip", label: "Hip circumference", type: "number", unit: "cm" },
+      { key: "muac", label: "MUAC", type: "number", unit: "cm" },
+      { key: "bodyFat", label: "Body fat", type: "number", unit: "%" },
+      { key: "boneMass", label: "Bone mass", type: "number", unit: "kg" },
+      { key: "muscleMass", label: "Muscle mass", type: "number", unit: "kg" },
+      { key: "bodyWater", label: "Body water", type: "number", unit: "%" },
+      { key: "metabolicAge", label: "Metabolic age", type: "number", unit: "years" },
+    ],
+  },
+  {
+    id: 3,
+    title: "Biochemical Data",
+    note: "Record lab findings as available. Free text is fine.",
+    fields: [
+      { key: "bloodTest", label: "Blood test", type: "textarea" },
+      { key: "urineTest", label: "Urine test", type: "textarea" },
+      { key: "stoolTest", label: "Stool test", type: "textarea" },
+    ],
+  },
+  {
+    id: 4,
+    title: "Clinical Data & Examination",
+    note: "Vital signs are checked against typical adult reference ranges.",
+    fields: [
+      { key: "bp", label: "Blood pressure (systolic/diastolic)", type: "text", placeholder: "e.g. 118/76" },
+      { key: "pulseRate", label: "Pulse rate", type: "number", unit: "bpm" },
+      { key: "respiratoryRate", label: "Respiratory rate", type: "number", unit: "breaths/min" },
+      { key: "bodyTemp", label: "Body temperature", type: "number", unit: "°C" },
+    ],
+  },
+  {
+    id: 5,
+    title: "Dietary Assessment",
+    note: "Used to tailor the suggested eating pattern.",
+    fields: [
+      { key: "foodIntolerance", label: "Food intolerance", type: "text" },
+      { key: "foodAllergy", label: "Food allergy", type: "text" },
+      { key: "foodPreference", label: "Food preference", type: "select", options: ["Vegetarian", "Non-vegetarian", "Eggetarian", "Vegan"] },
+      { key: "cerealPreference", label: "Cereal preference", type: "text" },
+    ],
+  },
+];
+
+const ALL_KEYS = SECTIONS.flatMap((s) => s.fields.map((f) => f.key));
+const EMPTY_FORM = Object.fromEntries(ALL_KEYS.map((k) => [k, ""]));
+
+const ACTIVITY_FACTORS = { Sedentary: 1.2, Light: 1.375, Moderate: 1.55, Heavy: 1.725 };
+
+// ---------- Calculation helpers ----------
+
+function computeAssessment(d) {
+  const height = parseFloat(d.height);
+  const weight = parseFloat(d.weight);
+  const waist = parseFloat(d.waist);
+  const hip = parseFloat(d.hip);
+  const age = parseFloat(d.age);
+  const pulse = parseFloat(d.pulseRate);
+  const resp = parseFloat(d.respiratoryRate);
+  const temp = parseFloat(d.bodyTemp);
+
+  const out = {};
+
+  if (height > 0 && weight > 0) {
+    const h = height / 100;
+    const bmi = weight / (h * h);
+    out.bmi = bmi;
+    if (bmi < 18.5) out.bmiCategory = "Underweight";
+    else if (bmi < 23) out.bmiCategory = "Normal";
+    else if (bmi < 25) out.bmiCategory = "Overweight";
+    else if (bmi < 30) out.bmiCategory = "Obese (Class I)";
+    else out.bmiCategory = "Obese (Class II+)";
+  }
+
+  if (height > 0) {
+    out.ibw = (height - 100) * 0.9;
+  }
+
+  if (waist > 0 && hip > 0) {
+    const whr = waist / hip;
+    out.whr = whr;
+    out.whrRisk = whr > 0.85 ? "Increased risk" : "Healthy range";
+  }
+
+  if (d.bp && d.bp.includes("/")) {
+    const [sysStr, diaStr] = d.bp.split("/");
+    const sys = parseFloat(sysStr);
+    const dia = parseFloat(diaStr);
+    if (!isNaN(sys) && !isNaN(dia)) {
+      if (sys < 90 || dia < 60) out.bpStatus = "Low";
+      else if (sys < 120 && dia < 80) out.bpStatus = "Normal";
+      else if (sys < 130 && dia < 80) out.bpStatus = "Elevated";
+      else if (sys < 140 || dia < 90) out.bpStatus = "Hypertension (Stage 1)";
+      else out.bpStatus = "Hypertension (Stage 2)";
+    }
+  }
+
+  if (!isNaN(pulse) && d.pulseRate !== "") {
+    if (pulse < 60) out.pulseStatus = "Low";
+    else if (pulse <= 100) out.pulseStatus = "Normal";
+    else out.pulseStatus = "High";
+  }
+
+  if (!isNaN(resp) && d.respiratoryRate !== "") {
+    if (resp < 12) out.respStatus = "Low";
+    else if (resp <= 20) out.respStatus = "Normal";
+    else out.respStatus = "High";
+  }
+
+  if (!isNaN(temp) && d.bodyTemp !== "") {
+    if (temp < 36.1) out.tempStatus = "Low";
+    else if (temp <= 37.2) out.tempStatus = "Normal";
+    else out.tempStatus = "Elevated";
+  }
+
+  if (height > 0 && weight > 0 && age > 0) {
+    const bmr = 10 * weight + 6.25 * height - 5 * age - 161;
+    const factor = ACTIVITY_FACTORS[d.workPattern] || 1.2;
+    const tdee = bmr * factor;
+    out.bmr = bmr;
+    out.tdee = tdee;
+
+    if (out.bmiCategory === "Underweight") {
+      out.calorieTarget = tdee + 300;
+      out.calorieGoalNote = "Suggested surplus to support healthy weight gain.";
+    } else if (out.bmiCategory === "Overweight" || (out.bmiCategory || "").startsWith("Obese")) {
+      out.calorieTarget = Math.max(tdee - 500, 1200);
+      out.calorieGoalNote = "Suggested deficit for gradual, sustainable weight loss.";
+    } else {
+      out.calorieTarget = tdee;
+      out.calorieGoalNote = "Suggested intake to maintain current weight.";
+    }
+  }
+
+  return out;
+}
+
+function flagColor(status) {
+  if (!status) return "neutral";
+  const ok = ["Normal", "Healthy range"];
+  const watch = ["Elevated", "Overweight", "Low", "Underweight", "Hypertension (Stage 1)"];
+  if (ok.includes(status)) return "ok";
+  if (watch.includes(status)) return "watch";
+  return "alert";
+}
+
+function buildDietNotes(d, calc) {
+  const notes = [];
+  if (calc.bmiCategory) notes.push(`BMI category: ${calc.bmiCategory}.`);
+  if (calc.whrRisk) notes.push(`Waist-hip ratio: ${calc.whrRisk.toLowerCase()}.`);
+  if (d.healthComplications) notes.push(`Health conditions noted (${d.healthComplications}) should be reviewed by a dietitian before finalising the plan.`);
+  if (d.foodAllergy) notes.push(`Exclude all forms of: ${d.foodAllergy}.`);
+  if (d.foodIntolerance) notes.push(`Limit or monitor tolerance to: ${d.foodIntolerance}.`);
+  if (d.foodPreference) notes.push(`Plan built around a ${d.foodPreference.toLowerCase()} pattern.`);
+  if (d.cerealPreference) notes.push(`Preferred cereals: ${d.cerealPreference}.`);
+  if (d.economicCondition) notes.push(`Recommendations should stay realistic for a ${d.economicCondition.toLowerCase()} economic household.`);
+  notes.push("General split as a starting point: ~50-55% energy from cereals/grains, ~15-20% from protein sources (pulses, dairy, eggs, meat per preference), and ~25-30% from fats/oils. A qualified dietitian should personalise this further.");
+  return notes;
+}
+
+// ---------- Small UI helpers ----------
+
+function Field({ field, value, onChange }) {
+  const common = {
+    id: field.key,
+    value: value ?? "",
+    onChange: (e) => onChange(field.key, e.target.value),
+    className: "w-full bg-white border border-stone-300 rounded-md px-3 py-2 text-[15px] text-stone-800 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition",
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={field.key} className="text-sm font-medium text-stone-600 flex items-baseline justify-between">
+        <span>{field.label}</span>
+        {field.unit && <span className="text-xs text-stone-400 font-mono">{field.unit}</span>}
+      </label>
+      {field.type === "textarea" ? (
+        <textarea {...common} rows={2} placeholder={field.placeholder || ""} />
+      ) : field.type === "select" ? (
+        <select {...common}>
+          <option value="">Select...</option>
+          {field.options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+        </select>
+      ) : (
+        <input {...common} type={field.type} placeholder={field.placeholder || ""} />
+      )}
+    </div>
+  );
+}
+
+function ReadoutRow({ label, value, status }) {
+  const color = flagColor(status);
+  const dot = {
+    ok: "bg-emerald-600",
+    watch: "bg-amber-500",
+    alert: "bg-rose-600",
+    neutral: "bg-stone-300",
+  }[color];
+
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-dashed border-stone-300 last:border-none">
+      <span className="text-sm text-stone-500">{label}</span>
+      <div className="flex items-center gap-2 font-mono text-sm text-stone-800">
+        <span>{value}</span>
+        {status && (
+          <span className="flex items-center gap-1.5">
+            <span className={`inline-block w-2 h-2 rounded-full ${dot}`} />
+            <span className="text-xs uppercase tracking-wide text-stone-500">{status}</span>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function dietNotesFor(d, c) {
+  return buildDietNotes(d, c);
+}
+
+// ---------- Main App ----------
+
+const STORAGE_KEY = "nutrition_assessment_participants_v1";
+
+function App() {
+  const [view, setView] = useState("list");
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [editingId, setEditingId] = useState(null);
+  const [participants, setParticipants] = useState([]);
+  const [search, setSearch] = useState("");
+  const [activeId, setActiveId] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  // Load saved participants from this browser's local storage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setParticipants(JSON.parse(raw));
+    } catch {
+      // no existing data yet
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  const persist = (next) => {
+    setParticipants(next);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setSaveError("");
+    } catch {
+      setSaveError("Could not save to this browser's storage. Your data is kept for this session only.");
+    }
+  };
+
+  const calc = useMemo(() => computeAssessment(form), [form]);
+
+  const handleChange = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+
+  const startNew = () => {
+    setForm(EMPTY_FORM);
+    setEditingId(null);
+    setStep(0);
+    setView("form");
+  };
+
+  const startEdit = (p) => {
+    setForm({ ...EMPTY_FORM, ...p.data });
+    setEditingId(p.id);
+    setStep(0);
+    setView("form");
+  };
+
+  const saveRecord = () => {
+    const record = { id: editingId || `p_${Date.now()}`, savedAt: new Date().toISOString(), data: form, calc };
+    let next;
+    if (editingId) next = participants.map((p) => (p.id === editingId ? record : p));
+    else next = [record, ...participants];
+    persist(next);
+    setActiveId(record.id);
+    setView("detail");
+  };
+
+  const deleteRecord = (id) => {
+    const next = participants.filter((p) => p.id !== id);
+    persist(next);
+    if (activeId === id) {
+      setActiveId(null);
+      setView("list");
+    }
+  };
+
+  // Neutralise CSV/formula injection: if a cell's text begins with a character
+  // that spreadsheet apps (Excel, Sheets, etc.) treat as a formula trigger,
+  // prefix it with a single quote so it is imported as plain text.
+  const sanitizeCsvCell = (value) => {
+    const str = String(value ?? "");
+    return /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+  };
+
+  const exportCsv = () => {
+    if (participants.length === 0) return;
+    const calcKeys = ["bmi", "bmiCategory", "ibw", "whr", "whrRisk", "tdee", "calorieTarget"];
+    const headers = [...ALL_KEYS, ...calcKeys];
+    const rows = participants.map((p) => {
+      const row = ALL_KEYS.map((k) => p.data[k] ?? "");
+      const c = p.calc || {};
+      calcKeys.forEach((ck) => {
+        const v = c[ck];
+        row.push(typeof v === "number" ? v.toFixed(1) : v ?? "");
+      });
+      return row;
+    });
+    const csv = [headers, ...rows].map((r) => r.map((cell) => `"${sanitizeCsvCell(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "nutrition-assessment-records.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const filtered = participants.filter((p) => (p.data.name || "Unnamed").toLowerCase().includes(search.toLowerCase()));
+  const active = participants.find((p) => p.id === activeId);
+
+  // ---------------- LIST VIEW ----------------
+  if (view === "list") {
+    return (
+      <div className="min-h-screen bg-[#EFF1E9] font-[IBM_Plex_Sans] text-stone-800">
+        <header className="bg-[#232825] text-[#EFF1E9] px-5 py-6">
+          <div className="max-w-2xl mx-auto">
+            <p className="text-xs uppercase tracking-[0.2em] text-[#D4A23A] font-mono mb-1">Dietary Planning Programme</p>
+            <h1 className="font-[Spectral] text-2xl font-semibold">Nutritional Assessment Register</h1>
+          </div>
+        </header>
+
+        <main className="max-w-2xl mx-auto px-5 py-6">
+          <div className="flex gap-2 mb-4">
+            <button onClick={startNew} className="flex-1 bg-[#D4A23A] text-[#232825] font-semibold rounded-md px-4 py-3 flex items-center justify-center gap-2 active:scale-[0.99] transition">
+              <ClipboardList size={18} />
+              New assessment
+            </button>
+            <button onClick={exportCsv} disabled={participants.length === 0} className="bg-white border border-stone-300 rounded-md px-4 py-3 flex items-center justify-center gap-2 text-stone-700 disabled:opacity-40" title="Export all records as CSV">
+              <Download size={18} />
+            </button>
+          </div>
+
+          {saveError && <p className="text-xs text-rose-600 mb-3 font-mono">{saveError}</p>}
+
+          <div className="relative mb-4">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name" className="w-full bg-white border border-stone-300 rounded-md pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </div>
+
+          {!loaded ? (
+            <p className="text-sm text-stone-500 text-center py-10">Loading records...</p>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-14 border border-dashed border-stone-300 rounded-lg bg-white/50">
+              <Users size={28} className="mx-auto text-stone-400 mb-2" />
+              <p className="text-sm text-stone-500">
+                {participants.length === 0 ? "No records yet. Start a new assessment to add the first participant." : "No names match that search."}
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {filtered.map((p) => {
+                const cat = p.calc?.bmiCategory;
+                const color = flagColor(cat === "Normal" ? "Normal" : cat);
+                const badge = {
+                  ok: "bg-emerald-100 text-emerald-700",
+                  watch: "bg-amber-100 text-amber-700",
+                  alert: "bg-rose-100 text-rose-700",
+                  neutral: "bg-stone-100 text-stone-500",
+                }[color];
+                return (
+                  <button key={p.id} onClick={() => { setActiveId(p.id); setView("detail"); }} className="bg-white rounded-md border border-stone-200 px-4 py-3 flex items-center justify-between text-left hover:border-amber-400 transition">
+                    <div>
+                      <p className="font-medium text-stone-800">{p.data.name || "Unnamed"}</p>
+                      <p className="text-xs text-stone-500">Age {p.data.age || "—"} · {p.data.occupation || "—"}</p>
+                    </div>
+                    {cat && <span className={`text-xs font-mono px-2 py-1 rounded ${badge}`}>{cat}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <p className="text-xs text-stone-400 mt-6 text-center">
+            Records are stored privately in this browser. Use export to share or back up data.
+          </p>
+        </main>
+      </div>
+    );
+  }
+
+  // ---------------- DETAIL VIEW ----------------
+  if (view === "detail" && active) {
+    const d = active.data;
+    const c = active.calc || {};
+    return (
+      <div className="min-h-screen bg-[#EFF1E9] print:bg-white font-[IBM_Plex_Sans] text-stone-800">
+        <header className="bg-[#232825] text-[#EFF1E9] px-5 py-5 flex items-center gap-3 no-print">
+          <button onClick={() => setView("list")} className="text-[#EFF1E9]"><ArrowLeft size={20} /></button>
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-[#D4A23A] font-mono">Assessment Record</p>
+            <h1 className="font-[Spectral] text-xl font-semibold">{d.name || "Unnamed"}</h1>
+          </div>
+        </header>
+
+        <main className="max-w-2xl mx-auto px-5 py-6 flex flex-col gap-4 print:max-w-none print:px-0 print:py-0">
+          <div className="flex gap-2 no-print">
+            <button onClick={() => startEdit(active)} className="flex-1 bg-white border border-stone-300 rounded-md px-4 py-2.5 text-sm font-medium">Edit record</button>
+            <button onClick={() => window.print()} className="bg-white border border-stone-300 rounded-md px-4 py-2.5 flex items-center gap-1.5 text-sm font-medium">
+              <Printer size={16} />
+              Save as PDF
+            </button>
+            <button onClick={() => deleteRecord(active.id)} className="bg-rose-50 border border-rose-200 text-rose-600 rounded-md px-4 py-2.5 flex items-center gap-1.5 text-sm font-medium">
+              <Trash2 size={16} />
+              Delete
+            </button>
+          </div>
+
+          {/* Print-only letterhead */}
+          <div className="hidden print:block print:mb-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-stone-400 font-mono">Dietary Planning Programme</p>
+            <h1 className="font-[Spectral] text-2xl font-semibold text-stone-800">Nutritional Assessment Summary</h1>
+            <p className="text-sm text-stone-500 mt-1">{d.name || "Unnamed"} · Age {d.age || "—"} · Generated {new Date().toLocaleDateString()}</p>
+            <div className="border-b border-stone-300 mt-3" />
+          </div>
+
+          {/* Readout panel - signature element */}
+          <section className="bg-white rounded-lg border border-stone-300 p-4 print:break-inside-avoid">
+            <p className="text-xs uppercase tracking-[0.2em] text-stone-400 font-mono mb-2">Calculated Readout</p>
+            <ReadoutRow label="BMI" value={c.bmi ? c.bmi.toFixed(1) : "—"} status={c.bmiCategory} />
+            <ReadoutRow label="Ideal body weight (approx.)" value={c.ibw ? `${c.ibw.toFixed(1)} kg` : "—"} />
+            <ReadoutRow label="Waist-hip ratio" value={c.whr ? c.whr.toFixed(2) : "—"} status={c.whrRisk} />
+            <ReadoutRow label="Blood pressure" value={d.bp || "—"} status={c.bpStatus} />
+            <ReadoutRow label="Pulse rate" value={d.pulseRate ? `${d.pulseRate} bpm` : "—"} status={c.pulseStatus} />
+            <ReadoutRow label="Respiratory rate" value={d.respiratoryRate ? `${d.respiratoryRate} /min` : "—"} status={c.respStatus} />
+            <ReadoutRow label="Body temperature" value={d.bodyTemp ? `${d.bodyTemp} °C` : "—"} status={c.tempStatus} />
+            {c.tdee && (
+              <>
+                <ReadoutRow label="Estimated maintenance energy" value={`${Math.round(c.tdee)} kcal/day`} />
+                <ReadoutRow label="Suggested daily target" value={`${Math.round(c.calorieTarget)} kcal/day`} />
+              </>
+            )}
+          </section>
+
+          {c.calorieGoalNote && <p className="text-xs text-stone-500 italic px-1">{c.calorieGoalNote}</p>}
+
+          {/* Diet guidance */}
+          <section className="bg-white rounded-lg border border-stone-300 p-4 print:break-inside-avoid">
+            <p className="text-xs uppercase tracking-[0.2em] text-stone-400 font-mono mb-2">Dietary Guidance Notes</p>
+            <ul className="flex flex-col gap-2">
+              {dietNotesFor(d, c).map((n, i) => (
+                <li key={i} className="text-sm text-stone-700 flex gap-2">
+                  <span className="text-[#D4A23A] mt-0.5">—</span>
+                  <span>{n}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-stone-400 mt-3">These notes are a starting point for the assigned dietitian, not a finished prescription.</p>
+          </section>
+
+          {/* All sections, read-only */}
+          {SECTIONS.map((section) => (
+            <section key={section.id} className="bg-white rounded-lg border border-stone-300 p-4 print:break-inside-avoid">
+              <p className="text-xs uppercase tracking-[0.2em] text-stone-400 font-mono mb-3">{String(section.id).padStart(2, "0")} · {section.title}</p>
+              <div className="flex flex-col gap-2">
+                {section.fields.map((f) => (
+                  <div key={f.key} className="flex justify-between gap-4 text-sm border-b border-stone-100 last:border-none pb-1.5 last:pb-0">
+                    <span className="text-stone-500">{f.label}</span>
+                    <span className="text-stone-800 text-right font-mono">{d[f.key] || "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+
+          <p className="text-xs text-stone-400 text-center pb-4">Saved {new Date(active.savedAt).toLocaleString()}</p>
+        </main>
+      </div>
+    );
+  }
+
+  // ---------------- FORM VIEW ----------------
+  const section = SECTIONS[step];
+  const isLast = step === SECTIONS.length - 1;
+
+  return (
+    <div className="min-h-screen bg-[#EFF1E9] font-[IBM_Plex_Sans] text-stone-800">
+      <header className="bg-[#232825] text-[#EFF1E9] px-5 py-5">
+        <div className="max-w-2xl mx-auto flex items-center gap-3">
+          <button onClick={() => setView("list")} className="text-[#EFF1E9]"><ArrowLeft size={20} /></button>
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-[#D4A23A] font-mono">{editingId ? "Editing record" : "New assessment"}</p>
+            <h1 className="font-[Spectral] text-xl font-semibold">{form.name || "Untitled participant"}</h1>
+          </div>
+        </div>
+
+        <div className="max-w-2xl mx-auto flex gap-1.5 mt-4 overflow-x-auto">
+          {SECTIONS.map((s, i) => (
+            <button key={s.id} onClick={() => setStep(i)} className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-mono border transition ${i === step ? "bg-[#D4A23A] text-[#232825] border-[#D4A23A]" : "border-[#3f453f] text-[#c9cdc1]"}`}>
+              {String(s.id).padStart(2, "0")}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <main className="max-w-2xl mx-auto px-5 py-6">
+        <h2 className="font-[Spectral] text-lg font-semibold mb-1">{section.title}</h2>
+        <p className="text-sm text-stone-500 mb-4">{section.note}</p>
+
+        <div className="flex flex-col gap-4 bg-white rounded-lg border border-stone-200 p-4">
+          {section.fields.map((field) => (
+            <Field key={field.key} field={field} value={form[field.key]} onChange={handleChange} />
+          ))}
+        </div>
+
+        {step === 1 && (calc.bmi || calc.whr || calc.ibw) && (
+          <section className="bg-white rounded-lg border border-dashed border-amber-400 p-4 mt-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-stone-400 font-mono mb-2">Live readout</p>
+            {calc.bmi && <ReadoutRow label="BMI" value={calc.bmi.toFixed(1)} status={calc.bmiCategory} />}
+            {calc.ibw && <ReadoutRow label="Ideal body weight (approx.)" value={`${calc.ibw.toFixed(1)} kg`} />}
+            {calc.whr && <ReadoutRow label="Waist-hip ratio" value={calc.whr.toFixed(2)} status={calc.whrRisk} />}
+          </section>
+        )}
+
+        {step === 3 && (calc.bpStatus || calc.pulseStatus || calc.respStatus || calc.tempStatus) && (
+          <section className="bg-white rounded-lg border border-dashed border-amber-400 p-4 mt-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-stone-400 font-mono mb-2">Live readout</p>
+            {calc.bpStatus && <ReadoutRow label="Blood pressure" value={form.bp} status={calc.bpStatus} />}
+            {calc.pulseStatus && <ReadoutRow label="Pulse rate" value={`${form.pulseRate} bpm`} status={calc.pulseStatus} />}
+            {calc.respStatus && <ReadoutRow label="Respiratory rate" value={`${form.respiratoryRate} /min`} status={calc.respStatus} />}
+            {calc.tempStatus && <ReadoutRow label="Body temperature" value={`${form.bodyTemp} °C`} status={calc.tempStatus} />}
+          </section>
+        )}
+
+        <div className="flex gap-2 mt-6">
+          <button onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0} className="flex items-center gap-1 border border-stone-300 bg-white rounded-md px-4 py-2.5 text-sm font-medium disabled:opacity-40">
+            <ChevronLeft size={16} />
+            Back
+          </button>
+          {!isLast ? (
+            <button onClick={() => setStep((s) => Math.min(SECTIONS.length - 1, s + 1))} className="flex-1 flex items-center justify-center gap-1 bg-[#232825] text-[#EFF1E9] rounded-md px-4 py-2.5 text-sm font-medium">
+              Next
+              <ChevronRight size={16} />
+            </button>
+          ) : (
+            <button onClick={saveRecord} className="flex-1 flex items-center justify-center gap-2 bg-[#D4A23A] text-[#232825] rounded-md px-4 py-2.5 text-sm font-semibold">
+              <Save size={16} />
+              Save record
+            </button>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
